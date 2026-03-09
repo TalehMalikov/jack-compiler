@@ -1,5 +1,6 @@
 # Project 10 - Jack Syntax Analyzer
 **Author:** Taleh Malikov
+**Repo:** https://github.com/TalehMalikov/jack-compiler
 
 ---
 
@@ -107,3 +108,4 @@ cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests/ExpressionLessSquare
 - `Comparison failed in line X`   — there is a mismatch at that line ✗
 
 All 14 comparisons should end successfully.
+
