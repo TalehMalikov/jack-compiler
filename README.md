@@ -1,5 +1,5 @@
 # Project 10 - Jack Syntax Analyzer
-**Author:** Taleh Malikov
+**Author:** Taleh Malikov  
 **Repo:** https://github.com/TalehMalikov/jack-compiler
 
 ---
