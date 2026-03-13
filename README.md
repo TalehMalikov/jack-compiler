@@ -1,4 +1,4 @@
-# Project 10 - Jack Syntax Analyzer
+# Jack Compiler - Projects 10 & 11
 **Author:** Taleh Malikov  
 **Repo:** https://github.com/TalehMalikov/jack-compiler
 
@@ -6,29 +6,37 @@
 
 ## Overview
 
-This project implements the front-end of the Jack compiler (syntax analysis).
-It takes `.jack` source files as input and produces two XML output files per class:
+This project implements a full Jack compiler in two stages:
 
-- `XxxT.xml` — flat token stream from the tokenizer
-- `Xxx.xml`  — structured parse tree from the parser
+- **Project 10** — Syntax analysis: tokenizer and recursive-descent parser, produces XML output
+- **Project 11** — Code generation: compiles Jack source to Hack VM code
 
 ---
 
 ## Files
-
 ```
-malikovTalehProject10/
+malikovTalehProject11/
 ├── src/
-│   ├── JackAnalyzer.py       - entry point, handles file/directory input
-│   ├── JackTokenizer.py      - tokenizer (breaks source into tokens)
-│   └── CompilationEngine.py  - recursive-descent parser (produces XML)
-├── tests/
-│   ├── Square/               - Square test .jack files
-│   ├── Square_compare/       - Square reference XML files
-│   ├── ArrayTest/            - ArrayTest .jack files
-│   ├── ArrayTest_compare/    - ArrayTest reference XML files
-│   ├── ExpressionLessSquare/ - ExpressionLessSquare .jack files
-│   └── ExpressionLessSquare_compare/ - ExpressionLessSquare reference XML files
+│   ├── JackAnalyzer.py       - Project 10 entry point (produces XML)
+│   ├── JackCompiler.py       - Project 11 entry point (produces VM code)
+│   ├── JackTokenizer.py      - tokenizer (shared by both projects)
+│   ├── CompilationEngine.py  - Project 11 compiler (produces VM code)
+│   ├── SymbolTable.py        - manages class and subroutine symbol tables
+│   └── VMWriter.py           - writes VM commands to output
+├── tests_project_10/
+│   ├── Square/
+│   ├── Square_compare/
+│   ├── ArrayTest/
+│   ├── ArrayTest_compare/
+│   ├── ExpressionLessSquare/
+│   └── ExpressionLessSquare_compare/
+├── tests_project_11/
+│   ├── Seven/
+│   ├── ConvertToBin/
+│   ├── Square/
+│   ├── Average/
+│   ├── Pong/
+│   └── ComplexArrays/
 └── README.md
 ```
 
@@ -41,71 +49,76 @@ malikovTalehProject10/
 
 ---
 
-## How to Run
+## Project 10 - Syntax Analyzer
 
-### Single file
+### How to Run
 ```
 python src/JackAnalyzer.py path/to/Xxx.jack
-```
-
-### Entire directory
-```
 python src/JackAnalyzer.py path/to/directory/
 ```
 
-This will generate `XxxT.xml` (tokenizer output) and `Xxx.xml` (parser output)
-in the same folder as the source `.jack` files.
+Produces `XxxT.xml` (token stream) and `Xxx.xml` (parse tree) alongside the source files.
+
+### How to Test
+
+**Important:** never put `.jack` files and reference `.xml` compare files in the same folder.
+```
+python src/JackAnalyzer.py tests_project_10/Square
+python src/JackAnalyzer.py tests_project_10/ArrayTest
+python src/JackAnalyzer.py tests_project_10/ExpressionLessSquare
+```
+
+Then compare with TextComparer (Windows):
+```
+cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests_project_10/Square/Main.xml tests_project_10/Square_compare/Main.xml
+cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests_project_10/Square/MainT.xml tests_project_10/Square_compare/MainT.xml
+cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests_project_10/Square/Square.xml tests_project_10/Square_compare/Square.xml
+cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests_project_10/Square/SquareT.xml tests_project_10/Square_compare/SquareT.xml
+cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests_project_10/Square/SquareGame.xml tests_project_10/Square_compare/SquareGame.xml
+cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests_project_10/Square/SquareGameT.xml tests_project_10/Square_compare/SquareGameT.xml
+cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests_project_10/ArrayTest/Main.xml tests_project_10/ArrayTest_compare/Main.xml
+cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests_project_10/ArrayTest/MainT.xml tests_project_10/ArrayTest_compare/MainT.xml
+cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests_project_10/ExpressionLessSquare/Main.xml tests_project_10/ExpressionLessSquare_compare/Main.xml
+cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests_project_10/ExpressionLessSquare/MainT.xml tests_project_10/ExpressionLessSquare_compare/MainT.xml
+cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests_project_10/ExpressionLessSquare/Square.xml tests_project_10/ExpressionLessSquare_compare/Square.xml
+cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests_project_10/ExpressionLessSquare/SquareT.xml tests_project_10/ExpressionLessSquare_compare/SquareT.xml
+cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests_project_10/ExpressionLessSquare/SquareGame.xml tests_project_10/ExpressionLessSquare_compare/SquareGame.xml
+cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests_project_10/ExpressionLessSquare/SquareGameT.xml tests_project_10/ExpressionLessSquare_compare/SquareGameT.xml
+```
+
+All 14 comparisons should end with `Comparison ended successfully`.
 
 ---
 
-## How to Test
+## Project 11 - Code Generation
 
-**Important:** never put your `.jack` files and the reference `.xml` compare files
-in the same folder, otherwise running the analyzer will overwrite them.
-Keep them in separate directories as shown in the file structure above.
-
-### Step 1 — Run the analyzer on each test directory
-
+### How to Run
 ```
-python src/JackAnalyzer.py tests/Square
-python src/JackAnalyzer.py tests/ArrayTest
-python src/JackAnalyzer.py tests/ExpressionLessSquare
+python src/JackCompiler.py path/to/Xxx.jack
+python src/JackCompiler.py path/to/directory/
 ```
 
-### Step 2 — Compare output against reference files using TextComparer
+Produces a `Xxx.vm` file alongside each `.jack` source file.
 
-Replace `<path-to-nand2tetris>` with your local Nand2Tetris installation path.
+### How to Test
 
-**On Windows:**
+#### Step 1 — Compile the test programs
 ```
-cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests/Square/Main.xml tests/Square_compare/Main.xml
-cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests/Square/MainT.xml tests/Square_compare/MainT.xml
-cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests/Square/Square.xml tests/Square_compare/Square.xml
-cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests/Square/SquareT.xml tests/Square_compare/SquareT.xml
-cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests/Square/SquareGame.xml tests/Square_compare/SquareGame.xml
-cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests/Square/SquareGameT.xml tests/Square_compare/SquareGameT.xml
-
-cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests/ArrayTest/Main.xml tests/ArrayTest_compare/Main.xml
-cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests/ArrayTest/MainT.xml tests/ArrayTest_compare/MainT.xml
-
-cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests/ExpressionLessSquare/Main.xml tests/ExpressionLessSquare_compare/Main.xml
-cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests/ExpressionLessSquare/MainT.xml tests/ExpressionLessSquare_compare/MainT.xml
-cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests/ExpressionLessSquare/Square.xml tests/ExpressionLessSquare_compare/Square.xml
-cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests/ExpressionLessSquare/SquareT.xml tests/ExpressionLessSquare_compare/SquareT.xml
-cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests/ExpressionLessSquare/SquareGame.xml tests/ExpressionLessSquare_compare/SquareGame.xml
-cmd /c "<path-to-nand2tetris>\tools\TextComparer.bat" tests/ExpressionLessSquare/SquareGameT.xml tests/ExpressionLessSquare_compare/SquareGameT.xml
+python src/JackCompiler.py tests_project_11/Seven
+python src/JackCompiler.py tests_project_11/ConvertToBin
+python src/JackCompiler.py tests_project_11/Square
+python src/JackCompiler.py tests_project_11/Average
+python src/JackCompiler.py tests_project_11/Pong
+python src/JackCompiler.py tests_project_11/ComplexArrays
 ```
 
-**On Mac/Linux:**
-```
-<path-to-nand2tetris>/tools/TextComparer.sh tests/Square/Main.xml tests/Square_compare/Main.xml
-```
-(repeat for each file as above)
+#### Step 2 — Run in the VM Emulator
 
-### Step 3 — Check results
+Open `nand2tetris/tools/VMEmulator.bat`, load the compiled folder, and run:
 
-- `Comparison ended successfully` — the file is correct ✓
-- `Comparison failed in line X`   — there is a mismatch at that line ✗
-
-All 14 comparisons should end successfully.
-
+- **Seven** — should print `7` on screen
+- **ConvertToBin** — set RAM[8000] to any number, run, check RAM[8001-8016] for binary output
+- **Square** — interactive square, move with arrow keys
+- **Average** — enter numbers one by one, type `0` to stop, prints the average
+- **Pong** — pong game, control bat with arrow keys
+- **ComplexArrays** — prints computed array values to screen

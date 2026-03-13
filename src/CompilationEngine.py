@@ -1,255 +1,347 @@
+# CompilationEngine.py
+
 from JackTokenizer import (
     JackTokenizer,
     TT_KEYWORD, TT_SYMBOL, TT_INT_CONST, TT_STRING_CONST, TT_IDENTIFIER,
-    _escape_xml,
 )
+from SymbolTable import SymbolTable
+from VMWriter import VMWriter
 
-OP_SET         = set('+-*/&|<>=')
-UNARY_OP_SET   = set('-~')
+OP_SET       = set('+-*/&|<>=')
+UNARY_OP_SET = set('-~')
 KEYWORD_CONSTS = {'true', 'false', 'null', 'this'}
+
+OP_VM = {
+    '+': 'add', '-': 'sub', '*': None,  # * and / use OS calls
+    '/': None,  '&': 'and', '|': 'or',
+    '<': 'lt',  '>': 'gt',  '=': 'eq',
+}
+UNARY_OP_VM = {'-': 'neg', '~': 'not'}
 
 
 class CompilationEngine:
 
     def __init__(self, tokenizer):
-        self._tok = tokenizer
-        self._out = []
-        self._indent = 0
+        self._tok   = tokenizer
+        self._sym   = SymbolTable()
+        self._vm    = VMWriter()
+        self._class_name   = ''
+        self._label_count  = 0
         if self._tok.hasMoreTokens():
             self._tok.advance()
 
-    # write opening tag and increase indent
-    def _open(self, tag):
-        self._out.append('  ' * self._indent + '<' + tag + '>')
-        self._indent += 1
+    def _newLabel(self):
+        label = f'L{self._label_count}'
+        self._label_count += 1
+        return label
 
-    # decrease indent and write closing tag
-    def _close(self, tag):
-        self._indent -= 1
-        self._out.append('  ' * self._indent + '</' + tag + '>')
-
-    # write current token as XML leaf and advance
-    def writeToken(self):
-        tt  = self._tok.tokenType()
+    def _eat(self, expected=None):
+        """Consume current token (optionally assert its value) and advance."""
         val = self._tok.currentValue()
-
-        if tt == TT_STRING_CONST:
-            val = _escape_xml(self._tok.stringVal())
-        elif tt == TT_SYMBOL:
-            val = _escape_xml(val)
-        elif tt == TT_INT_CONST:
-            val = str(self._tok.intVal())
-
-        self._out.append('  ' * self._indent + '<' + tt + '> ' + val + ' </' + tt + '>')
+        if expected is not None and val != expected:
+            raise SyntaxError(f'expected {expected!r}, got {val!r}')
         if self._tok.hasMoreTokens():
             self._tok.advance()
+        return val
 
-    def getXML(self):
-        return '\n'.join(self._out)
+    def getOutput(self):
+        return self._vm.getOutput()
 
-    # <<< class >>>
+    #  <<< class >>>>
 
     def compileClass(self):
-        self._open('class')
-        self.writeToken()   # class
-        self.writeToken()   # className
-        self.writeToken()   # {
+        self._eat('class')
+        self._class_name = self._eat()          # className
+        self._eat('{')
         while self._tok.currentValue() in ('static', 'field'):
             self.compileClassVarDec()
         while self._tok.currentValue() in ('constructor', 'function', 'method'):
             self.compileSubroutine()
-        self.writeToken()   # }
-        self._close('class')
+        self._eat('}')
 
     def compileClassVarDec(self):
-        self._open('classVarDec')
-        self.writeToken()   # static | field
-        self.writeToken()   # type
-        self.writeToken()   # varName
+        kind  = self._eat()                     # static | field
+        type_ = self._eat()                     # type
+        name  = self._eat()                     # varName
+        self._sym.define(name, type_, kind)
         while self._tok.currentValue() == ',':
-            self.writeToken()   # ,
-            self.writeToken()   # varName
-        self.writeToken()   # ;
-        self._close('classVarDec')
+            self._eat(',')
+            name = self._eat()
+            self._sym.define(name, type_, kind)
+        self._eat(';')
 
-    # <<< subroutine >>>
+    #  <<< subroutine >>>>
 
     def compileSubroutine(self):
-        self._open('subroutineDec')
-        self.writeToken()   # constructor | function | method
-        self.writeToken()   # void | type
-        self.writeToken()   # subroutineName
-        self.writeToken()   # (
+        self._sym.startSubroutine()
+        kind = self._eat()                      # constructor | function | method
+        ret_type = self._eat()                  # void | type
+        name = self._eat()                      # subroutineName
+
+        # methods receive 'this' as argument 0
+        if kind == 'method':
+            self._sym.define('this', self._class_name, 'arg')
+
+        self._eat('(')
         self.compileParameterList()
-        self.writeToken()   # )
-        self.compileSubroutineBody()
-        self._close('subroutineDec')
+        self._eat(')')
+        self.compileSubroutineBody(name, kind)
 
     def compileParameterList(self):
-        self._open('parameterList')
         if self._tok.currentValue() != ')':
-            self.writeToken()   # type
-            self.writeToken()   # varName
+            type_ = self._eat()
+            name  = self._eat()
+            self._sym.define(name, type_, 'arg')
             while self._tok.currentValue() == ',':
-                self.writeToken()   # ,
-                self.writeToken()   # type
-                self.writeToken()   # varName
-        self._close('parameterList')
+                self._eat(',')
+                type_ = self._eat()
+                name  = self._eat()
+                self._sym.define(name, type_, 'arg')
 
-    def compileSubroutineBody(self):
-        self._open('subroutineBody')
-        self.writeToken()   # {
+    def compileSubroutineBody(self, sub_name, kind):
+        self._eat('{')
         while self._tok.currentValue() == 'var':
             self.compileVarDec()
+
+        full_name = f'{self._class_name}.{sub_name}'
+        n_locals  = self._sym.varCount('var')
+        self._vm.writeFunction(full_name, n_locals)
+
+        if kind == 'constructor':
+            # allocate memory for the object
+            n_fields = self._sym.varCount('field')
+            self._vm.writePush('constant', n_fields)
+            self._vm.writeCall('Memory.alloc', 1)
+            self._vm.writePop('pointer', 0)         # anchor THIS
+
+        elif kind == 'method':
+            # set THIS to the object passed as argument 0
+            self._vm.writePush('arg', 0)
+            self._vm.writePop('pointer', 0)
+
         self.compileStatements()
-        self.writeToken()   # }
-        self._close('subroutineBody')
+        self._eat('}')
 
     def compileVarDec(self):
-        self._open('varDec')
-        self.writeToken()   # var
-        self.writeToken()   # type
-        self.writeToken()   # varName
+        self._eat('var')
+        type_ = self._eat()
+        name  = self._eat()
+        self._sym.define(name, type_, 'var')
         while self._tok.currentValue() == ',':
-            self.writeToken()   # ,
-            self.writeToken()   # varName
-        self.writeToken()   # ;
-        self._close('varDec')
+            self._eat(',')
+            name = self._eat()
+            self._sym.define(name, type_, 'var')
+        self._eat(';')
 
     # <<< statements >>>
 
     def compileStatements(self):
-        self._open('statements')
         while True:
             v = self._tok.currentValue()
-            if v == 'let':
-                self.compileLet()
-            elif v == 'if':
-                self.compileIf()
-            elif v == 'while':
-                self.compileWhile()
-            elif v == 'do':
-                self.compileDo()
-            elif v == 'return':
-                self.compileReturn()
-            else:
-                break
-        self._close('statements')
+            if   v == 'let':    self.compileLet()
+            elif v == 'if':     self.compileIf()
+            elif v == 'while':  self.compileWhile()
+            elif v == 'do':     self.compileDo()
+            elif v == 'return': self.compileReturn()
+            else: break
 
     def compileLet(self):
-        self._open('letStatement')
-        self.writeToken()   # let
-        self.writeToken()   # varName
-        if self._tok.currentValue() == '[':
-            self.writeToken()   # [
-            self.compileExpression()
-            self.writeToken()   # ]
-        self.writeToken()   # =
-        self.compileExpression()
-        self.writeToken()   # ;
-        self._close('letStatement')
+        self._eat('let')
+        var_name = self._eat()
+        is_array = self._tok.currentValue() == '['
+
+        if is_array:
+            # push base address of array
+            self._pushVar(var_name)
+            self._eat('[')
+            self.compileExpression()     # index
+            self._eat(']')
+            self._vm.writeArithmetic('add')   # base + index -> address on stack
+
+        self._eat('=')
+        self.compileExpression()         # RHS value now on stack
+        self._eat(';')
+
+        if is_array:
+            self._vm.writePop('temp', 0)      # save value
+            self._vm.writePop('pointer', 1)   # set THAT to address
+            self._vm.writePush('temp', 0)     # restore value
+            self._vm.writePop('that', 0)      # store
+        else:
+            self._popVar(var_name)
 
     def compileIf(self):
-        self._open('ifStatement')
-        self.writeToken()   # if
-        self.writeToken()   # (
+        label_else = self._newLabel()
+        label_end  = self._newLabel()
+
+        self._eat('if')
+        self._eat('(')
         self.compileExpression()
-        self.writeToken()   # )
-        self.writeToken()   # {
+        self._eat(')')
+        self._vm.writeArithmetic('not')
+        self._vm.writeIf(label_else)
+
+        self._eat('{')
         self.compileStatements()
-        self.writeToken()   # }
+        self._eat('}')
+        self._vm.writeGoto(label_end)
+
+        self._vm.writeLabel(label_else)
         if self._tok.currentValue() == 'else':
-            self.writeToken()   # else
-            self.writeToken()   # {
+            self._eat('else')
+            self._eat('{')
             self.compileStatements()
-            self.writeToken()   # }
-        self._close('ifStatement')
+            self._eat('}')
+        self._vm.writeLabel(label_end)
 
     def compileWhile(self):
-        self._open('whileStatement')
-        self.writeToken()   # while
-        self.writeToken()   # (
+        label_start = self._newLabel()
+        label_end   = self._newLabel()
+
+        self._eat('while')
+        self._vm.writeLabel(label_start)
+        self._eat('(')
         self.compileExpression()
-        self.writeToken()   # )
-        self.writeToken()   # {
+        self._eat(')')
+        self._vm.writeArithmetic('not')
+        self._vm.writeIf(label_end)
+
+        self._eat('{')
         self.compileStatements()
-        self.writeToken()   # }
-        self._close('whileStatement')
+        self._eat('}')
+        self._vm.writeGoto(label_start)
+        self._vm.writeLabel(label_end)
 
     def compileDo(self):
-        self._open('doStatement')
-        self.writeToken()   # do
-        self.writeToken()   # subroutineName | className | varName
-        if self._tok.currentValue() == '.':
-            self.writeToken()   # .
-            self.writeToken()   # subroutineName
-        self.writeToken()   # (
-        self.compileExpressionList()
-        self.writeToken()   # )
-        self.writeToken()   # ;
-        self._close('doStatement')
+        self._eat('do')
+        self._compileSubroutineCall()
+        self._eat(';')
+        self._vm.writePop('temp', 0)     # discard return value
 
     def compileReturn(self):
-        self._open('returnStatement')
-        self.writeToken()   # return
+        self._eat('return')
         if self._tok.currentValue() != ';':
             self.compileExpression()
-        self.writeToken()   # ;
-        self._close('returnStatement')
+        else:
+            self._vm.writePush('constant', 0)   # void return
+        self._eat(';')
+        self._vm.writeReturn()
 
     # <<< expressions >>>
 
     def compileExpression(self):
-        self._open('expression')
         self.compileTerm()
         while self._tok.currentValue() in OP_SET:
-            self.writeToken()   # op
+            op = self._eat()
             self.compileTerm()
-        self._close('expression')
+            if op == '*':
+                self._vm.writeCall('Math.multiply', 2)
+            elif op == '/':
+                self._vm.writeCall('Math.divide', 2)
+            else:
+                self._vm.writeArithmetic(OP_VM[op])
 
     def compileTerm(self):
-        self._open('term')
         tt  = self._tok.tokenType()
         val = self._tok.currentValue()
 
         if tt == TT_INT_CONST:
-            self.writeToken()
+            self._vm.writePush('constant', self._tok.intVal())
+            self._eat()
+
         elif tt == TT_STRING_CONST:
-            self.writeToken()
+            s = self._tok.stringVal()
+            self._eat()
+            self._vm.writePush('constant', len(s))
+            self._vm.writeCall('String.new', 1)
+            for ch in s:
+                self._vm.writePush('constant', ord(ch))
+                self._vm.writeCall('String.appendChar', 2)
+
         elif tt == TT_KEYWORD and val in KEYWORD_CONSTS:
-            self.writeToken()
+            self._eat()
+            if val == 'true':
+                self._vm.writePush('constant', 0)
+                self._vm.writeArithmetic('not')
+            elif val in ('false', 'null'):
+                self._vm.writePush('constant', 0)
+            elif val == 'this':
+                self._vm.writePush('pointer', 0)
+
         elif val == '(':
-            self.writeToken()   # (
+            self._eat('(')
             self.compileExpression()
-            self.writeToken()   # )
+            self._eat(')')
+
         elif val in UNARY_OP_SET:
-            self.writeToken()   # unary op
+            op = self._eat()
             self.compileTerm()
+            self._vm.writeArithmetic(UNARY_OP_VM[op])
+
         elif tt == TT_IDENTIFIER:
             next_tok = self._tok.peek()
             if next_tok == '[':
-                self.writeToken()   # varName
-                self.writeToken()   # [
+                # array access
+                self._pushVar(val)
+                self._eat()          # varName
+                self._eat('[')
                 self.compileExpression()
-                self.writeToken()   # ]
+                self._eat(']')
+                self._vm.writeArithmetic('add')
+                self._vm.writePop('pointer', 1)
+                self._vm.writePush('that', 0)
             elif next_tok in ('(', '.'):
-                self.writeToken()   # subroutineName | className
-                if self._tok.currentValue() == '.':
-                    self.writeToken()   # .
-                    self.writeToken()   # subroutineName
-                self.writeToken()   # (
-                self.compileExpressionList()
-                self.writeToken()   # )
+                self._compileSubroutineCall()
             else:
-                self.writeToken()   # plain variable
-
-        self._close('term')
+                self._pushVar(val)
+                self._eat()
 
     def compileExpressionList(self):
-        self._open('expressionList')
+        count = 0
         if self._tok.currentValue() != ')':
             self.compileExpression()
+            count += 1
             while self._tok.currentValue() == ',':
-                self.writeToken()   # ,
+                self._eat(',')
                 self.compileExpression()
-        self._close('expressionList')
+                count += 1
+        return count
+
+    #  <<< helpers >>> 
+
+    def _compileSubroutineCall(self):
+        name = self._eat()              # subroutineName | className | varName
+        n_args = 0
+
+        if self._tok.currentValue() == '.':
+            self._eat('.')
+            method_name = self._eat()
+            kind = self._sym.kindOf(name)
+            if kind is not None:
+                # name is a variable -> instance method call
+                self._pushVar(name)
+                full_name = f'{self._sym.typeOf(name)}.{method_name}'
+                n_args = 1              # 'this' is argument 0
+            else:
+                # name is a class -> static function / constructor call
+                full_name = f'{name}.{method_name}'
+        else:
+            # unqualified call -> method on current object
+            self._vm.writePush('pointer', 0)
+            full_name = f'{self._class_name}.{name}'
+            n_args = 1
+
+        self._eat('(')
+        n_args += self.compileExpressionList()
+        self._eat(')')
+        self._vm.writeCall(full_name, n_args)
+
+    def _pushVar(self, name):
+        kind  = self._sym.kindOf(name)
+        index = self._sym.indexOf(name)
+        self._vm.writePush(kind, index)
+
+    def _popVar(self, name):
+        kind  = self._sym.kindOf(name)
+        index = self._sym.indexOf(name)
+        self._vm.writePop(kind, index)
